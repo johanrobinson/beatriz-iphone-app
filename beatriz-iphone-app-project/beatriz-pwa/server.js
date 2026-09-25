@@ -105,7 +105,7 @@ app.post('/chat', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile', // Updated: 3.1 was decommissioned, 3.3 is current
+        model: 'openai/gpt-oss-120b', // Free tier model - OpenAI GPT OSS 120B
         messages: groqMessages,
         temperature: 0.7,
         max_tokens: 150, // Keep responses concise for natural conversation
