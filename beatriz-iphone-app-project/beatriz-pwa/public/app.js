@@ -18,22 +18,35 @@ let spanishVoice;
 // Find best Spanish voice
 function findSpanishVoice() {
   const voices = synthesis.getVoices();
+  console.log('Available voices:', voices.map(v => `${v.name} (${v.lang})`));
+
   // Prefer female Spanish voices
   const preferred = voices.find(v =>
     (v.lang.startsWith('es') && v.name.includes('Female')) ||
     (v.lang.startsWith('es') && v.name.includes('Monica')) ||
     (v.lang.startsWith('es') && v.name.includes('Paulina'))
   );
-  return preferred || voices.find(v => v.lang.startsWith('es')) || voices[0];
+
+  const selected = preferred || voices.find(v => v.lang.startsWith('es')) || voices[0];
+  console.log('Selected voice:', selected ? `${selected.name} (${selected.lang})` : 'none');
+  return selected;
 }
 
-// Load voices when available
-if (synthesis.onvoiceschanged !== undefined) {
-  synthesis.onvoiceschanged = () => {
-    spanishVoice = findSpanishVoice();
-  };
+// Initialize voices - iOS Safari needs this
+function initVoices() {
+  return new Promise((resolve) => {
+    const voices = synthesis.getVoices();
+    if (voices.length > 0) {
+      spanishVoice = findSpanishVoice();
+      resolve();
+    } else {
+      synthesis.onvoiceschanged = () => {
+        spanishVoice = findSpanishVoice();
+        resolve();
+      };
+    }
+  });
 }
-spanishVoice = findSpanishVoice();
 
 function updateClock() {
   const now = new Date();
@@ -65,10 +78,18 @@ function speak(text) {
       return;
     }
 
+    console.log('Speaking:', text);
+
     // Cancel any ongoing speech
     synthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
+
+    // Make sure we have a voice
+    if (!spanishVoice) {
+      spanishVoice = findSpanishVoice();
+    }
+
     utterance.voice = spanishVoice;
     utterance.lang = 'es-ES';
     utterance.rate = 0.85; // Slower for learning
@@ -76,11 +97,13 @@ function speak(text) {
     utterance.volume = 1.0;
 
     utterance.onstart = () => {
+      console.log('Speech started');
       isSpeaking = true;
       setState('Beatriz pratar', true);
     };
 
     utterance.onend = () => {
+      console.log('Speech ended');
       isSpeaking = false;
       setState('Lyssnar', false);
       if (isListening) {
@@ -96,7 +119,16 @@ function speak(text) {
       resolve();
     };
 
+    console.log('Starting speech synthesis...');
     synthesis.speak(utterance);
+
+    // iOS Safari workaround: sometimes needs a push
+    setTimeout(() => {
+      if (synthesis.paused) {
+        console.log('Resuming paused speech');
+        synthesis.resume();
+      }
+    }, 100);
   });
 }
 
@@ -177,6 +209,10 @@ async function startCall() {
     lastMessage.textContent = '';
     setState('Iniciando...', false);
     subtitle.textContent = 'Conectando contigo...';
+
+    // Initialize voices first (important for iOS)
+    await initVoices();
+    console.log('Voices initialized');
 
     // Initialize speech recognition
     recognition = new SpeechRecognition();
