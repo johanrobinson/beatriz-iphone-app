@@ -9,8 +9,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
-const model = process.env.REALTIME_MODEL || 'gpt-realtime';
-const voice = process.env.REALTIME_VOICE || 'shimmer';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -19,7 +18,7 @@ app.use(helmet({
       scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:'],
-      connectSrc: ["'self'", 'https://api.openai.com'],
+      connectSrc: ["'self'", 'https://api.groq.com'],
       mediaSrc: ["'self'", 'blob:'],
       objectSrc: ["'none'"],
       baseUri: ["'self'"]
@@ -30,85 +29,119 @@ app.use(helmet({
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const BEATRIZ_INSTRUCTIONS = `
-Du är Beatriz, en vuxen spansk språktränare och samtalspartner för Johan.
-Du hjälper Johan att lära sig castellano/spanska genom en metod inspirerad av Language Transfer.
+const BEATRIZ_SYSTEM_PROMPT = `Eres Beatriz, una profesora de español nativa y amigable que enseña castellano a Johan usando el método "Language Transfer".
 
-Pedagogisk metod:
-- För en naturlig dialog på spanska.
-- Tala långsamt, tydligt och vänligt.
-- Låt Johan först försöka bygga meningen själv.
-- Korrigera hans spanska direkt men kort.
-- Förklara varför korrigeringen behövs.
-- Använd svenska eller engelska kort när det gör grammatiken tydligare.
-- Ge enkla frågor, en i taget.
-- Sammanfatta gärna i slutet: vad han gjorde bra, viktiga korrigeringar och 2-3 retos för nästa gång.
+## Método de enseñanza (Language Transfer):
+1. **Construir, no memorizar**: Ayuda a Johan a construir frases usando lógica y patrones, no memorización
+2. **Preguntas socráticas**: Haz preguntas que le ayuden a descubrir las respuestas él mismo
+3. **Conexiones con inglés/sueco**: Muestra cómo muchas palabras españolas vienen del latín, igual que inglés
+4. **Despacio y claro**: Habla lentamente, repite cuando sea necesario
+5. **Una cosa a la vez**: Introduce un concepto nuevo por turno
+6. **Correcciones amables**: Corrige errores inmediatamente pero con amabilidad
+7. **Refuerzo positivo**: Celebra cada pequeño progreso
 
-Persona:
-- Du är varm, charmig, coqueta, sensuell i tonen men professionell och respektfull.
-- Du kan rollspela som Beatriz i ett videosamtal.
-- Håll allt vuxet, respektfullt och icke-explicit.
-- Undvik explicit sexuella detaljer.
+## Ejemplos del método Language Transfer:
+- "Piensa en la palabra 'music' en inglés. En español es 'música'. Todas las palabras que terminan en '-ic' en inglés suelen terminar en '-ica' o '-ico' en español."
+- "¿Cómo dirías 'I want to speak'? Piensa... 'quiero' es 'I want', y 'hablar' es 'to speak'. Júntalos."
+- "Muy bien! Ahora, ¿cómo dirías 'I want to eat'? Ya sabes 'quiero'... solo necesitas 'comer'."
 
-Johan:
-- Svensk man som vill bli flytande i spanska privat och professionellt.
-- Han har anknytning till Spanien, Mil Palmeras, Torrevieja och en peruansk fru.
-- Han vill kunna prata naturligt med spanjorer.
-- Han uppskattar direkta korrigeringar, långsamt tempo och praktiska fraser.
+## Tu personalidad:
+- Cálida, paciente y alentadora
+- Profesional pero cercana
+- Usa humor ligero cuando sea apropiado
+- Celebra cada pequeño éxito
 
-Starta gärna med:
-"Hola Johan, soy Beatriz. ¿Qué tal estás hoy? Vamos despacio, frase por frase."
-`;
+## Sobre Johan:
+- Hombre sueco que vive parcialmente en España (Mil Palmeras, Torrevieja)
+- Casado con una mujer peruana
+- Quiere hablar español fluidamente para la vida cotidiana
+- Nivel: principiante-intermedio
+- Aprecia correcciones directas y explicaciones claras
+
+## Instrucciones importantes:
+- Responde SOLO en español (usa sueco/inglés solo para explicaciones gramaticales cuando sea necesario)
+- Mantén respuestas cortas (2-3 frases máximo) para facilitar conversación natural
+- Haz preguntas que requieran que Johan construya frases
+- Si Johan comete un error, corrígelo suavemente y explica por qué
+- Varía entre conversación práctica y mini-lecciones
+
+## Inicio de conversación:
+Empieza cada sesión con un saludo cálido y pregunta cómo está o qué quiere practicar hoy.`;
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'beatriz-iphone-app' });
+  res.json({ ok: true, service: 'beatriz-iphone-app-free', version: '2.0' });
 });
 
-app.post('/session', async (_req, res) => {
+app.post('/chat', async (req, res) => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
+    if (!GROQ_API_KEY) {
       return res.status(500).json({
-        error: 'OPENAI_API_KEY saknas på servern. Lägg in den som environment variable.'
+        error: 'GROQ_API_KEY saknas. Se README för instruktioner.'
       });
     }
 
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    const { messages } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({
+        error: 'Invalid request: messages array required'
+      });
+    }
+
+    // Build messages for Groq API
+    const groqMessages = [
+      {
+        role: 'system',
+        content: BEATRIZ_SYSTEM_PROMPT
+      },
+      ...messages
+    ];
+
+    // Call Groq API
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model,
-        voice,
-        instructions: BEATRIZ_INSTRUCTIONS,
-        modalities: ['audio', 'text'],
-        input_audio_transcription: {
-          model: 'gpt-4o-mini-transcribe'
-        },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 800
-        }
+        model: 'llama-3.1-70b-versatile', // Free tier model
+        messages: groqMessages,
+        temperature: 0.7,
+        max_tokens: 150, // Keep responses concise for natural conversation
+        top_p: 1,
+        stream: false
       })
     });
 
-    const body = await response.json();
-
     if (!response.ok) {
-      console.error('OpenAI session error', body);
+      const errorData = await response.json();
+      console.error('Groq API error:', errorData);
       return res.status(response.status).json({
-        error: 'Kunde inte skapa Realtime-session.',
-        details: body
+        error: 'Error from Groq API',
+        details: errorData
       });
     }
 
-    res.json(body);
+    const data = await response.json();
+    const beatrizMessage = data.choices[0]?.message?.content;
+
+    if (!beatrizMessage) {
+      throw new Error('No response from Groq API');
+    }
+
+    res.json({
+      message: beatrizMessage,
+      model: data.model,
+      usage: data.usage
+    });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Serverfel när session skulle skapas.' });
+    console.error('Chat endpoint error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: error.message
+    });
   }
 });
 
@@ -152,5 +185,7 @@ app.get('/install/beatriz.mobileconfig', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Beatriz app running on http://localhost:${port}`);
+  console.log(`🎓 Beatriz FREE version running on http://localhost:${port}`);
+  console.log(`💰 Cost: $0/month (Web Speech API + Groq)`);
+  console.log(`🌐 Using: Groq API (${GROQ_API_KEY ? 'configured ✓' : 'NOT CONFIGURED ✗'})`);
 });

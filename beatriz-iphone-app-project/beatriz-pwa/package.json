@@ -1,7 +1,7 @@
 {
   "name": "beatriz-iphone-app",
   "version": "1.0.0",
-  "description": "FaceTime-like Beatriz Spanish practice PWA using OpenAI Realtime API",
+  "description": "FaceTime-like Beatriz Spanish practice PWA - FREE version using Web Speech API + Groq",
   "type": "module",
   "main": "server.js",
   "scripts": {

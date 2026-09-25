@@ -6,13 +6,34 @@ const stateLabel = document.getElementById('connectionState');
 const subtitle = document.getElementById('subtitle');
 const lastMessage = document.getElementById('lastMessage');
 const liveDot = document.getElementById('liveDot');
-const remoteAudio = document.getElementById('remoteAudio');
 const clock = document.getElementById('clock');
 
-let peerConnection;
-let dataChannel;
-let localStream;
-let muted = false;
+let recognition;
+let synthesis = window.speechSynthesis;
+let isListening = false;
+let isSpeaking = false;
+let conversationHistory = [];
+let spanishVoice;
+
+// Find best Spanish voice
+function findSpanishVoice() {
+  const voices = synthesis.getVoices();
+  // Prefer female Spanish voices
+  const preferred = voices.find(v =>
+    (v.lang.startsWith('es') && v.name.includes('Female')) ||
+    (v.lang.startsWith('es') && v.name.includes('Monica')) ||
+    (v.lang.startsWith('es') && v.name.includes('Paulina'))
+  );
+  return preferred || voices.find(v => v.lang.startsWith('es')) || voices[0];
+}
+
+// Load voices when available
+if (synthesis.onvoiceschanged !== undefined) {
+  synthesis.onvoiceschanged = () => {
+    spanishVoice = findSpanishVoice();
+  };
+}
+spanishVoice = findSpanishVoice();
 
 function updateClock() {
   const now = new Date();
@@ -37,110 +58,189 @@ function setControls(inCall) {
   endButton.disabled = !inCall;
 }
 
-function handleRealtimeEvent(event) {
-  if (!event || !event.type) return;
+function speak(text) {
+  return new Promise((resolve) => {
+    if (!text || text.trim().length === 0) {
+      resolve();
+      return;
+    }
 
-  if (event.type === 'response.audio_transcript.delta') {
-    lastMessage.textContent = (lastMessage.textContent || '') + (event.delta || '');
-    setState('Beatriz pratar', true);
-  }
+    // Cancel any ongoing speech
+    synthesis.cancel();
 
-  if (event.type === 'response.audio_transcript.done') {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.voice = spanishVoice;
+    utterance.lang = 'es-ES';
+    utterance.rate = 0.85; // Slower for learning
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    utterance.onstart = () => {
+      isSpeaking = true;
+      setState('Beatriz pratar', true);
+    };
+
+    utterance.onend = () => {
+      isSpeaking = false;
+      setState('Lyssnar', false);
+      if (isListening) {
+        startListening();
+      }
+      resolve();
+    };
+
+    utterance.onerror = (event) => {
+      console.error('Speech synthesis error:', event);
+      isSpeaking = false;
+      setState('Fel', false);
+      resolve();
+    };
+
+    synthesis.speak(utterance);
+  });
+}
+
+function startListening() {
+  if (!recognition || isSpeaking) return;
+
+  try {
+    recognition.start();
     setState('Lyssnar', false);
+  } catch (error) {
+    if (error.name !== 'InvalidStateError') {
+      console.error('Recognition start error:', error);
+    }
   }
+}
 
-  if (event.type === 'conversation.item.input_audio_transcription.completed') {
-    const transcript = event.transcript ? `Du: ${event.transcript}` : '';
-    if (transcript) lastMessage.textContent = transcript;
+function stopListening() {
+  if (recognition) {
+    try {
+      recognition.stop();
+    } catch (error) {
+      console.error('Recognition stop error:', error);
+    }
   }
+}
 
-  if (event.type === 'error') {
-    console.error(event);
-    lastMessage.textContent = event.error?.message || 'Ett fel uppstod.';
-    setState('Fel', false);
+async function getBeatrizResponse(userMessage) {
+  try {
+    conversationHistory.push({
+      role: 'user',
+      content: userMessage
+    });
+
+    // Keep only last 10 messages to avoid context overflow
+    if (conversationHistory.length > 20) {
+      conversationHistory = conversationHistory.slice(-20);
+    }
+
+    const response = await fetch('/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messages: conversationHistory
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Server error');
+    }
+
+    const data = await response.json();
+    const beatrizMessage = data.message;
+
+    conversationHistory.push({
+      role: 'assistant',
+      content: beatrizMessage
+    });
+
+    return beatrizMessage;
+  } catch (error) {
+    console.error('Error getting response:', error);
+    return 'Lo siento, tuve un problema. ¿Puedes repetir?';
   }
 }
 
 async function startCall() {
   try {
+    // Check for browser support
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      throw new Error('Tu navegador no soporta reconocimiento de voz. Usa Safari en iPhone.');
+    }
+
     setControls(true);
     lastMessage.textContent = '';
-    setState('Ansluter...', false);
+    setState('Iniciando...', false);
     subtitle.textContent = 'Conectando contigo...';
 
-    const sessionResponse = await fetch('/session', { method: 'POST' });
-    const session = await sessionResponse.json();
+    // Initialize speech recognition
+    recognition = new SpeechRecognition();
+    recognition.lang = 'es-ES';
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
 
-    if (!sessionResponse.ok) {
-      throw new Error(session.error || 'Kunde inte skapa session.');
-    }
+    recognition.onresult = async (event) => {
+      const last = event.results.length - 1;
+      const userText = event.results[last][0].transcript;
 
-    const clientSecret = session.client_secret?.value;
-    if (!clientSecret) {
-      throw new Error('Servern returnerade ingen client_secret.');
-    }
+      lastMessage.textContent = `Tú: ${userText}`;
 
-    peerConnection = new RTCPeerConnection();
+      // Stop listening while Beatriz responds
+      stopListening();
+      setState('Pensando...', false);
 
-    peerConnection.ontrack = event => {
-      remoteAudio.srcObject = event.streams[0];
+      // Get Beatriz's response
+      const beatrizResponse = await getBeatrizResponse(userText);
+
+      lastMessage.textContent = `Beatriz: ${beatrizResponse}`;
+
+      // Speak the response
+      await speak(beatrizResponse);
     };
 
-    peerConnection.onconnectionstatechange = () => {
-      if (peerConnection.connectionState === 'connected') {
-        setState('Samtal aktivt', true);
-        subtitle.textContent = 'Vamos despacio, frase por frase';
-      }
-      if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
-        setState('Avslutat', false);
-      }
-    };
-
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    for (const track of localStream.getTracks()) {
-      peerConnection.addTrack(track, localStream);
-    }
-
-    dataChannel = peerConnection.createDataChannel('oai-events');
-    dataChannel.addEventListener('message', message => {
-      try {
-        handleRealtimeEvent(JSON.parse(message.data));
-      } catch (error) {
-        console.warn('Could not parse event', message.data);
-      }
-    });
-
-    dataChannel.addEventListener('open', () => {
-      dataChannel.send(JSON.stringify({
-        type: 'response.create',
-        response: {
-          modalities: ['audio', 'text'],
-          instructions: 'Saluda a Johan como Beatriz y empieza una práctica corta de español. Habla despacio.'
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      if (event.error === 'no-speech') {
+        // Restart listening if no speech detected
+        if (isListening && !isSpeaking) {
+          startListening();
         }
-      }));
-    });
+      } else if (event.error === 'not-allowed') {
+        lastMessage.textContent = 'Tillåt mikrofon-åtkomst i inställningar.';
+        setState('Fel', false);
+        endCall();
+      } else {
+        setState('Lyssnar', false);
+      }
+    };
 
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+    recognition.onend = () => {
+      // Restart if still in call and not speaking
+      if (isListening && !isSpeaking) {
+        setTimeout(() => startListening(), 100);
+      }
+    };
 
-    const sdpResponse = await fetch('https://api.openai.com/v1/realtime?model=gpt-realtime', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${clientSecret}`,
-        'Content-Type': 'application/sdp'
-      },
-      body: offer.sdp
-    });
+    isListening = true;
 
-    if (!sdpResponse.ok) {
-      throw new Error(await sdpResponse.text());
-    }
+    // Start with Beatriz greeting
+    setState('Ansluten', true);
+    subtitle.textContent = 'Vamos despacio, frase por frase';
 
-    const answerSdp = await sdpResponse.text();
-    await peerConnection.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-    setState('Lyssnar', true);
+    const greeting = 'Hola Johan, soy Beatriz. ¿Qué tal estás hoy? Vamos despacio, frase por frase.';
+    conversationHistory = [];
+    lastMessage.textContent = `Beatriz: ${greeting}`;
+
+    await speak(greeting);
+
   } catch (error) {
-    console.error(error);
+    console.error('Start call error:', error);
     lastMessage.textContent = `Fel: ${error.message}`;
     setState('Fel', false);
     await endCall();
@@ -148,31 +248,35 @@ async function startCall() {
 }
 
 async function endCall() {
-  if (dataChannel) {
-    try { dataChannel.close(); } catch {}
-    dataChannel = null;
-  }
-  if (peerConnection) {
-    try { peerConnection.close(); } catch {}
-    peerConnection = null;
-  }
-  if (localStream) {
-    for (const track of localStream.getTracks()) track.stop();
-    localStream = null;
-  }
-  remoteAudio.srcObject = null;
-  muted = false;
-  muteButton.textContent = 'Mikrofon';
+  isListening = false;
+  isSpeaking = false;
+
+  stopListening();
+  synthesis.cancel();
+
+  recognition = null;
+  conversationHistory = [];
+
   setControls(false);
   setState('Redo', false);
   subtitle.textContent = 'Tu profesora de español';
+  lastMessage.textContent = '';
 }
 
 function toggleMute() {
-  if (!localStream) return;
-  muted = !muted;
-  for (const track of localStream.getAudioTracks()) track.enabled = !muted;
-  muteButton.textContent = muted ? 'Slå på mic' : 'Mikrofon';
+  if (!recognition) return;
+
+  isListening = !isListening;
+
+  if (isListening) {
+    startListening();
+    muteButton.textContent = 'Mikrofon';
+    setState('Lyssnar', false);
+  } else {
+    stopListening();
+    muteButton.textContent = 'Slå på mic';
+    setState('Tystad', false);
+  }
 }
 
 startButton.addEventListener('click', startCall);
