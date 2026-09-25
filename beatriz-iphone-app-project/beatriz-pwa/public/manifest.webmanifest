@@ -1,0 +1,19 @@
+{
+  "name": "Beatriz",
+  "short_name": "Beatriz",
+  "description": "Spanish practice with Beatriz",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#140d11",
+  "theme_color": "#140d11",
+  "icons": [
+    {
+      "src": "/assets/beatriz-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

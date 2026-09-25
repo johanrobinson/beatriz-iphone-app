@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Beatriz</title>
+  <meta name="theme-color" content="#140d11" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/assets/beatriz-icon.png" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="phone-shell" aria-label="Beatriz videosamtal">
+    <section class="call-screen">
+      <div class="status-row">
+        <span id="clock">15:34</span>
+        <span class="pill" id="connectionState">Redo</span>
+      </div>
+
+      <div class="remote-video" id="remoteVideo">
+        <img src="/assets/beatriz-avatar.png" alt="Beatriz avatar" class="beatriz-avatar" id="avatar" />
+        <div class="soft-glow"></div>
+        <div class="name-card">
+          <span class="live-dot" id="liveDot"></span>
+          <div>
+            <h1>Beatriz</h1>
+            <p id="subtitle">Tu profesora de español</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="self-preview" aria-label="Din förhandsvy">
+        <div class="self-face">J</div>
+        <span>Johan</span>
+      </div>
+
+      <div class="transcript-card" id="transcriptCard">
+        <p class="hint">Tryck på “Starta samtal” och säg: <strong>Hola Beatriz, quiero practicar español.</strong></p>
+        <p id="lastMessage" aria-live="polite"></p>
+      </div>
+
+      <div class="controls" aria-label="Samtalskontroller">
+        <button id="startCall" type="button" class="control primary">Starta samtal</button>
+        <button id="muteCall" type="button" class="control" disabled>Mikrofon</button>
+        <button id="endCall" type="button" class="control danger" disabled>Avsluta</button>
+      </div>
+
+      <audio id="remoteAudio" autoplay></audio>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
